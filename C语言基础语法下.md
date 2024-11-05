@@ -822,3 +822,481 @@ sscanf(argv[1], "%d", &num);
    2. 减少悬空指针出现的风险。解引用空指针导致程序崩溃，比悬空指针带来的未定义行为要更容易检测和修正。
 3. **慎重改变堆区指针的指向。**指向堆区域的指针，如果需要改变它的指向，在改变之前应当考虑指向的内存块是否需要free。
 4. **多函数共同管理同一块内存区域时，应严格遵循单一原则。**尤其是，哪个函数用于分配内存，哪个函数用于free释放内存，这两个函数一定要明确单一的职责。
+
+## 5.free函数
+
+为了避免内存泄漏，在确定动态分配的内存不再使用后，要及时调用free函数释放它，这是非常重要的。
+
+1. free函数的声明是：`void free(void *ptr);`
+2. **参数必须是堆上申请内存块的地址(首字节地址)，不能传递别的指针，否则会引发未定义行为。**
+3. free 函数的行为是：
+   1. **free函数并不会修改它所释放的内存区域中存储的任何数据。**free 的作用仅仅是告诉操作系统这块内存不再被使用了，可以将其标记为可用状态，以供将来的内存分配请求使用。
+   2. 释放后的内存区域中的数据一般仍然会继续存在，直到被下一次的内存分配操作覆盖。当然即便free前的原始数据一直存在未被覆盖，这片内存区域也不再可用了，因为你不知道什么时候数据就会被覆盖掉了。
+   3. **free函数不会修改传入指针指向的内容，更不会对实参指针本身做任何修改。**
+
+## 6.清零内存分配函数calloc
+
+calloc 函数也是C语言中进行动态内存分配的重要函数，下面是对 calloc 函数的详细介绍：
+
+1. 全名是：cleared allocation，该函数的最大特点是分配内存空间时会**自动初始化0值**。
+2. 该函数的声明是： `void* calloc(size_t num, size_t size);`。该函数有两个参数：
+   1. `num` 表示要分配的元素数量
+   2. `size` 表示每个元素的内存大小
+3. 此函数也会在堆空间上分配一片连续的内存空间，但不同的是，它基于元素的个数以及每个元素的大小来进行内存分配，所以**calloc常用于在堆上分配数组的内存空间。**
+4. **初始化为零**：calloc 最重要的特性之一是它会自动将分配的内存初始化为零。这意味着不仅仅是分配内存，它还清零所有内存。
+5. 返回值在分配成功和失败时，和malloc是一致的。
+
+**推荐在动态分配数组内存空间时，尤其是需要将内存空间初始化为0值时，使用calloc函数。**
+
+```c
+#define _CRT_SECURE_NO_WARNINGS
+#include <stdio.h>
+#include <stdlib.h>
+
+typedef struct {
+ int x;
+ int y;
+} Node;
+
+int main(void) {
+ // 分配一个长度为10的整数数组
+ int len = 10;
+ int *arr = calloc(len, sizeof(int));
+
+ int* p = arr;
+ for (int i = 0; i < len; i++){
+     printf("%d\n", *p++);  // 此时数组中的元素都具有0值，而不是随机未定义的
+ }
+
+ // 使用完毕，不要忘记free
+ free(arr);
+
+ // 分配结构体数组
+ Node* node_arr_p = calloc(3, sizeof(Node));
+ // 分配一个结构体的内存空间
+ Node* node_p = calloc(1, sizeof(Node));
+
+ free(node_arr_p); 
+ free(node_p);
+
+ return 0;
+}
+```
+
+对比malloc：
+
+内存分配函数**malloc(xx)**和清零内存分配函数**calloc(1, xx)**，在分配内存的效果上看起来是一样的，都会在堆上分配一个该类型的内存空间。但它们还是有区别的：
+
+1. malloc由于不需要初始化0值，性能可能会更好一些。所以在特别在意性能以及内存确实手动初始化时，优先选择用malloc函数。
+2. **calloc的优点是安全。**如果使用malloc函数分配内存，那么内存块中的所有元素都只有一个随机值，此时若忘记初始化直接使用这些随机值就会产生未定义行为，这是非常危险的！！而这个危险，可以通过使用calloc函数解决。
+
+**在实际应用中，特别是当程序安全和正确性是首要考虑时，在两个函数都可用时，那么请选择使用calloc(1, xx)。**
+
+## 7.内存重新分配工具realloc
+
+realloc函数是重要的内存分配函数之一，尤其是在需要动态扩容/收缩机制的数据结构中，它的使用几乎是必须的。
+
+下面是它的详细介绍：
+
+1. 全名是：reallocation，表示内存重新分配。
+2. 函数声明是：`void* realloc(void* ptr, size_t new_size);`。此函数有两个参数：
+   1. `ptr`：指向原来已分配内存的内存块。
+   2. `new_size`：新的内存块大小。
+3. 该函数根据参数取值的不同，可能表现为malloc或free函数的行为：
+   1. **如果ptr指针是一个空指针，那么该函数的行为和malloc一致——分配new_size字节的内存空间，并且返回该内存块的指针。**
+   2. **如果new_size的取值为0，那么该函数的行为就是free函数，会释放ptr指向的内存块。**
+4. 如果没有出现上述两种特殊情况，realloc用于重新调整已分配内存块的大小(也就是ptr指针指向的已分配内存块的大小)：
+   1. 当new_size的取值和已分配的内存块大小一致时，此函数不会做任何操作。
+   2. 当new_size的取值比已分配的内存块小时(新内存块比旧内存块小时)，会在旧内存块的**尾部(高地址)**截断，被截断抛弃的内存块会被自动释放。
+   3. **当new_size的取值比已分配的内存块大时(新内存块比旧内存块大时)，会尽可能地尝试原地扩大旧内存块(这样效率高)；**
+   4. **如果无法原地进行扩大，则会在别处申请空间分配new_size大小的新内存块，并将旧内存块中的数据全部复制进去后，将旧内存块自动释放。**
+   5. 不管采用哪种方式扩展旧内存块，新扩展部分的内存区域都不会初始化，仍只具有随机值。
+5. 如果realloc函数分配内存空间成功，它会返回指向新内存块的指针，**若失败，仍会返回空指针，且不会改变旧内存块。**
+
+总之，realloc函数适用于调整已分配内存块的大小，**特别是在动态数组或数据结构的大小需要在程序运行时增加或减少时使用。**
+
+### 7.1 realloc函数正确的使用方式
+
+首先我们利用calloc或者malloc函数申请一片内存空间：
+
+```c
+int len = 5;
+int* arr_p = calloc(len, sizeof(int));
+if (arr_p == NULL){
+    // 分配失败处理
+}
+// 代码运行到这里,arr_p一定不是空指针
+```
+
+第一次分配了一个长度为5的整数数组。下面调用realloc函数对该数组做内存重分配，那么该如何写这个函数调用呢？
+
+```c
+// p和arr_p指针类型一致
+p = realloc(arr_p, new_size);
+if (p == NULL){
+   // 分配失败处理
+}
+// 代码运行到这里,realloc分配内存成功
+arr_p = p;
+```
+
+这样写代码既避免了arr_p成为悬空指针，也不会因为realloc分配失败导致内存泄漏。如果直接将 `realloc` 的返回值赋给 `arr_p`，而 `realloc` 失败返回 `NULL`，原来的内存指针就会丢失，导致内存泄漏。通过使用临时指针 `p`，可以在 `realloc` 失败时保留原来的指针，以便进行适当的错误处理或释放。
+
+```c
+#include <stdio.h>
+#include <stdlib.h>
+
+void print_arr(int* arr, int len) {
+    printf("[");
+    for (size_t i = 0; i < len; i++) {
+        printf("%d, ", *arr++);
+    }
+    printf("\b\b]\n");
+}
+
+int main(void) {
+    int size = 5;
+    // 使用calloc分配内存并自动初始化为0
+    int* arr = (int*)calloc(size, sizeof(int));
+
+    // 检查内存分配是否成功
+    if (arr == NULL) {
+        printf("calloc failed!\n");
+        exit(-1);
+    }
+    // 打印一下数组元素，此时全是0
+    print_arr(arr, size);
+
+    int* p = arr;   // 用于移动给数组元素赋值的指针
+    for (size_t i = 0; i < size; i++) {
+        *p++ = i;
+    }
+    print_arr(arr, size);
+
+    // 重分配内存缩减，惯用法
+    int new_size = 3;
+    int* tmp = realloc(arr, new_size * sizeof(int));
+    if (tmp == NULL) {
+        printf("realloc failed!\n");
+        exit(-1);
+    }
+    arr = tmp;
+    print_arr(arr, new_size);
+
+    // 重分配内存扩容，惯用法
+    int new_size2 = 10;
+    int* tmp2 = realloc(arr, new_size2 * sizeof(int));
+    if (tmp2 == NULL) {
+        printf("realloc failed!\n");
+        exit(-1);
+    }
+    arr = tmp2;
+    // print_arr(arr, new_size2);   // Error：直接打印会出现很多随机值
+
+    int* p2 = arr + new_size;   // 利用临时指针和指针算术运算将后续未初始化的元素全部初始化为8
+    while (p2 < (arr + new_size2)) {
+        *p2++ = 8;
+    }
+    print_arr(arr, new_size2);
+
+    // 使用完毕后，不要忘记free
+    free(arr);
+
+    return 0;
+}
+```
+
+## 8.二级指针
+
+假如我们想要创建一个链表，代码如下:
+
+```c
+// main函数中
+Node *list = NULL;  // 表示链表为空,一个结点都没有
+insert_head(list, 1);
+insert_head(list, 2);
+insert_head(list, 3);
+insert_head(list, 4);
+```
+
+```c
+void insert_head(Node* list, E data) {
+ // 1.创建新节点
+ Node* new_node = malloc(sizeof(Node));
+ if (new_node == NULL) {
+     printf("malloc failed in insert_head.\n");
+     exit(1);
+ }
+
+ // 2.初始化新节点的数据域
+ new_node->data = data;
+
+ // 3.新结点的next指针指向原本第一个节点
+ new_node->next = list;
+
+ // 4.将头指针指向新结点
+ list = new_node;
+}
+```
+
+运行main函数，这个链表能够创建成功吗？
+
+显然是失败的，那么为什么呢？归根结底是因为C语言的值传递机制。
+
+![C语言值传递导致失败-示意图](https://tonve2.oss-cn-shanghai.aliyuncs.com/202311141058160.png)
+
+由于C语言的值传递机制，insert_head函数得到的只不过是list指针的副本，在函数内部list副本确实指向了创建的新结点，但却无法影响main函数中list指针本身。除此之外，这么做还会导致内存泄漏。
+
+这个案例，就凸显了C语言函数参数传递的两个关键特点：
+
+1. **如果直接传递参数本身，那么函数无法对参数本身进行修改，只能修改它的副本。**
+2. **如果传递参数的指针，那么函数可以通过指针变量的副本去修改参数本身，但却无法修改指针。**
+
+二级指针是指向指针的指针，在C语言中通过**两个星号（\**）**定义。例如，**int \**ptr** 表示一个指向 int 类型指针的指针。
+
+二级指针本质上还是一个指针变量，所以它在使用之前也需要进行初始化。
+
+它可以初始化为一个空指针，也可以指向一个**已存在的指针变量(存储指针变量的地址)**。
+
+使用二级指针实现无返回值的头插法函数，参考代码如下：
+
+```c
+void insert_head(Node** p, DataType data) {
+    // 1.创建新节点
+    Node* new_node = malloc(sizeof(Node));
+    if (new_node == NULL) {
+        printf("malloc failed in insert_head.\n");
+        exit(1);
+    }
+
+    // 2.初始化新节点的数据域
+    new_node->data = data;
+
+    // 3.新结点的next指针指向原本第一个节点
+    new_node->next = *p;
+
+    // 4.将头指针指向新结点
+    *p = new_node;
+}
+```
+
+除此之外，函数调用也需要做出一些修改：
+
+```c
+Node* list = NULL;
+insert_head(&list, 1);
+insert_head(&list, 2);
+insert_head(&list, 3);
+insert_head(&list, 4);
+```
+
+二级指针函数传参-示意图
+
+![二级指针函数传参-示意图](https://tonve2.oss-cn-shanghai.aliyuncs.com/202311141235153.png)
+
+## 9.函数指针
+
+函数指针(Pointer to Function)，即指向函数的指针。它仍然是一个指针变量，用于存储地址，只不过存储的不再是数据的地址，而是函数的地址。
+
+如何理解函数的地址这个概念呢？
+
+**在C语言中，函数在经过编译后变成了一系列机器指令，存储在程序的代码段(只读)当中。**
+
+函数的地址是指向这些指令序列起始点的内存地址，即函数的入口点。每个函数的指令序列从起始地址开始，到结束指令地址为止，构成了函数在内存中的一块区域。
+
+简而言之，函数的地址可以视为指向其指令集合起始位置地址的指针。
+
+函数指针语法在C语言中，最常见的用途就是——"将函数作为参数传递"。这种作为参数传递的函数，就是我们常说的**"回调函数(callback function)"**。
+
+### 9.1 函数指针变量的声明
+
+首先是函数指针的声明，它的语法形式如下：
+
+```c
+函数返回值类型 (*函数指针名)(函数形参列表);
+```
+
+```c
+// 声明一个指向"返回值类型是void、不接受任何参数的函数"的指针
+void (*fun_ptr)(void);
+
+// 声明一个指向"返回值类型是int、接受两个int参数的函数"的指针
+int (*fun_ptr2)(int, int);
+
+// 声明一个指向"返回值类型是char指针、接受一个const char指针参数的函数"的指针
+char* (*fun_ptr3)(const char *);
+```
+
+前面讲过函数指针主要的作用就是将函数作为参数传递，所以函数指针的声明大概率要写在某一个函数的形参列表中。
+
+此时**语法中"\*"可以省略**(虽然也可以不省略，但建议省略)，这样语法就变成了下面的样子：
+
+```c
+// test函数需要传入一个"返回值类型是void、不接受任何参数的函数"的指针
+void test(void fun_ptr(void)){
+}
+
+// test2函数需要传入一个"返回值类型是int、接受两个int参数的函数"的指针
+void test2(int fun_ptr(int, int)){
+}
+
+// test3函数需要传入一个"返回值类型是char指针、接受一个const char指针参数的函数"的指针
+void test3(char* fun_ptr3(const char *)){
+}
+```
+
+### 9.2 给函数指针类型起别名
+
+**一般建议在使用函数指针类型时，给它起一个别名。**
+
+给函数指针类型起别名的语法，同样很怪异。它看起来就是在声明语法的前面加上一个"typedef"关键字，然后直接用别名替换指针名的位置。
+
+```
+typedef 函数返回值类型 (*函数指针别名)(函数形参列表);
+```
+
+```c
+// 一个指向"返回值类型是void、不接受任何参数的函数"的指针类型,别名是FuncPtr
+typedef void (*FuncPtr)(void);
+
+// 函数指针类型作为形参
+void test(FuncPtr p){
+}
+void main(void){
+    // 声明函数指针类型指针变量
+    FuncPtr p;
+    return 0;
+}
+```
+
+### 9.3 函数指针变量的初始化
+
+函数指针变量的初始化虽然有些特殊，但先定义别名，配合别名使用，其实是一个很简单直接的语法。
+
+首先作为一个指针变量，是允许使用字面值NULL赋值的，也就是一个空指针。
+
+**若想正常将一个函数地址赋值给函数指针变量，直接使用函数名赋值即可，这是因为在C语言中函数名就代表函数地址。**
+
+在给函数指针类型起别名的情况下，参考以下初始化函数指针的代码：
+
+```c
+// 一个指向"返回值类型是void、不接受任何参数的函数"的指针类型,别名是FuncPtr
+typedef void (*FuncPtr)(void);
+
+void test(void) {}
+void func(FuncPtr ptr) {}
+int main(void) {
+    // 直接使用别名就行声明和初始化，这种做法使得函数指针的使用看起来正常了
+    FuncPtr p = NULL;   // 可以是空指针
+    FuncPtr p2 = test;
+    FuncPtr p3 = &test; // 可以对函数名取地址,但其实没必要
+
+    // func需要传入一个函数指针
+    func(p2);
+    func(p3);
+    func(test);
+    func(&test);    // 可以对函数名取地址,但其实没必要
+    return 0;
+}
+```
+
+### 9.4 一个简单的计算器示例
+
+```c
+typedef int (*Operation)(int, int);
+
+
+int add(int a, int b) {
+    return a + b;
+}
+
+int subtract(int a, int b) {
+    return a - b;
+}
+
+int multiply(int a, int b) {
+    return a * b;
+}
+
+
+int calculate(int a, int b, Operation op) {
+    return op(a, b);
+}
+
+int main() {
+ int x = 10, y = 5;
+ // 使用加法
+ printf("x + y = %d\n", calculate(x, y, add));
+ // 使用减法
+ printf("x - y = %d\n", calculate(x, y, subtract));
+ // 使用乘法
+ printf("x * y = %d\n", calculate(x, y, multiply));
+ return 0;
+}
+```
+
+## 10.qsort
+
+**qsort 函数**是一个功能强大的标准库函数，调用它需要包含**头文件<stdlib.h>**。
+
+正如它的函数名一样，它的作用是进行排序，而由于在函数内部采用快速排序算法(quick sort)，所以它被命名为"qsort"。
+
+```c
+void qsort(void *base, size_t num, size_t size, int (*compare)(const void *, const void *));
+```
+
+函数的每一个参数意为：
+
+1. base：通用指针类型，表示要排序的数组，可以是任意类型数组。
+2. num：数组中的元素数量，也就是待排序的base数组的长度。
+3. size：base数组中每个元素的大小，通常使用 sizeof 运算符得到。
+4. compare：函数指针类型，表示该函数需要传入一个返回值类型是`int`，形参列表是`const void *, const void *`的表示比较规则的函数。
+
+关于qsort函数的行为，需要的有**两个规则**：
+
+1. 排序的规则：qsort函数会将base数组中的元素按照**从小到大**的顺序排序，这个排序的规则是固定的。
+2. 比较大小的规则：既然是按照从小到大排序，那么如何决定数组中元素的大小关系呢？答：**由函数指针传入的函数决定！**
+
+```c
+int compare(const void *a, const void *b);
+```
+
+这个函数用来确定base数组中任意两个元素的大小关系，其中**形参的a和b代表base数组中的两个待比较元素的指针。**
+
+返回值整数代码a和b的大小关系，实际上可以把该函数看出**"(a - b)"**：
+
+1. 如果返回值小于0是个负数，说明a < b
+2. 如果返回值大于0是个正数，说明a > b
+3. 如果返回值是0，说明a = b
+
+注意事项：
+
+特别需要注意的是，要理解这句：**形参的a和b代表base数组中的两个待比较元素的指针。**
+
+假如base数组是一个int数组，通用指针类型a和b也就是指向int类型的指针类型，也就是int*类型，此时比较规则的函数应该按照下列格式编写：
+
+```c
+int my_cmp(const void *a, const void *b){
+    // 将a和b转换成int*类型，然后才可以进行比较操作
+    const int *num1 = a;
+    const int *num2 = (const int*)b;    // 对于C语言而言，强转语法可写可不写
+    // 后续表示大小规则的逻辑
+}
+```
+
+但如果待排序的数组是一个指针数组，最常见的就是对字符串数组`char *strs[]`或者`char **`进行排序，此时通用指针类型a和b也就是指向char\*类型的指针类型，此时a和b的类型就是char \**类型。
+
+此时比较规则的函数就应该按照下列格式去写：
+
+```c
+int my_cmp(const void *a, const void *b){
+    // 将a和b转换成char*类型，然后才可以进行比较操作
+    const char *s1 = *(const char **)a; // 强转成二级指针再解引用一次，才能得到char*字符串的一级指针
+    const char *s2 = *(const char **)b; // 注意：此时的强转语法是不能省略的。
+    // 后续表示大小规则的逻辑
+}
+```
+
+**尤其要注意：此时强转的语法是不能省略的，必须先强转再解引用。因为通用指针类型是明确不能直接解引用的！！！**
+
+**qsort函数是函数指针和回调函数应用的经典示例。它需要传入一个比较函数用于确定"数组内元素的大小关系"，并最终将数组内的元素按照"从小到大"的顺序排序。**
